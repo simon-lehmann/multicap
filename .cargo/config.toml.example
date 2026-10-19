@@ -1,0 +1,17 @@
+# Copy to .cargo/config.toml to cross-compile for Windows from Linux or macOS.
+# Replace HOME_DIR with your own home directory: cargo does not expand
+# environment variables or ~ in these paths, so they must be absolute.
+#
+#   rustup target add x86_64-pc-windows-msvc
+#   cargo install xwin
+#   xwin --accept-license splat --output HOME_DIR/.xwin
+#
+# No Microsoft toolchain is needed: the `windows` crate ships its own import
+# libraries, xwin supplies the CRT ones, and rust-lld does the linking.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+rustflags = [
+  "-Lnative=HOME_DIR/.xwin/crt/lib/x86_64",
+  "-Lnative=HOME_DIR/.xwin/sdk/lib/um/x86_64",
+  "-Lnative=HOME_DIR/.xwin/sdk/lib/ucrt/x86_64",
+]

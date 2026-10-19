@@ -85,7 +85,7 @@ pub struct Encoder {
 }
 
 impl Encoder {
-    /// `path` may be a UNC path (`\\\\spark\\rec\\take.mp4`), which is how a take
+    /// `path` may be a UNC path (`\\\\nas\\takes\\take.mp4`), which is how a take
     /// is written straight to the other machine instead of being copied after.
     pub fn new(dev: &Device, path: &str, cfg: VideoConfig) -> Result<Self> {
         let mut token = 0u32;

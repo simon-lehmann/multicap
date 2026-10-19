@@ -10,7 +10,7 @@ A take config:
 
   {
     "name": "s04-t1",
-    "dir": "\\\\spark\\rec",
+    "dir": "\\\\nas\\takes",
     "capture_cursor": false,
     "targets": [
       {"label": "i1", "hwnd": 123456, "pid": 4242, "video": true,  "audio": true},

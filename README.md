@@ -79,7 +79,7 @@ report:
   "name": "s04-t1",
   "tracks": [{
     "label": "i1",
-    "video_file": "\\\\spark\\rec\\s04-t1-i1.mp4",
+    "video_file": "\\\\nas\\takes\\s04-t1-i1.mp4",
     "audio": { "path": "...wav", "seconds": 12.04, "glitches": 0 },
     "cadence": { "frames": 722, "seconds": 12.01, "fps": 60.1, "gaps": [], "dropped": 0 },
     "constant_quality": true,
@@ -137,7 +137,9 @@ cargo install xwin && xwin --accept-license splat --output ~/.xwin
 cargo build --release --target x86_64-pc-windows-msvc
 ```
 
-(`.cargo/config.toml` points at `~/.xwin`; change the paths if yours is elsewhere.)
+Copy `.cargo/config.toml.example` to `.cargo/config.toml` and put your own home
+directory in the three paths; cargo does not expand `~` or environment variables
+there.
 
 ## Requirements
 
