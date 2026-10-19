@@ -159,7 +159,10 @@ ffmpeg -i take-i1.mp4 -itsoffset <audio_offset_seconds> -i take-i1.wav \
        -c:v copy -c:a flac -shortest take-i1.mkv
 ```
 
-Audio stays lossless 32-bit float WAV until you decide otherwise.
+Audio stays lossless 32-bit float WAV until you decide otherwise. The offset is
+not a calibration constant: the hook stamps each frame off the performance
+counter and the audio engine stamps each buffer off the same counter, so it is
+subtraction. Measured between 7.5 ms and 26.3 ms across four clients in one run.
 
 ## Status
 
@@ -175,7 +178,10 @@ Audio stays lossless 32-bit float WAV until you decide otherwise.
 | **Constant-quality rate control** | **proven** on AMD (RDNA 4): the encoder accepted a fixed quantiser. Still best effort elsewhere, and the report says which mode was actually used |
 | **Four games recorded at once** | **proven** 19 Oct 2026: four WoW clients, 2337 frames in 10 s (57.5–58.6 fps each), 0 dropped, 0 torn, 0 waits timed out, one file per client |
 | **Cost** | **measured** 19 Oct 2026: 2.73 s of CPU for 10.2 s of wall clock recording four clients — about 0.27 of one core, against 2.23 cores for the four games themselves. The recorder costs roughly an eighth of what it records |
-| Window capture, audio, daemon | compile; unproven at runtime |
+| **Per-game sound on the hook path** | **proven** 19 Oct 2026: 10.00 s of 48 kHz stereo float per client, 0 glitches, and four clients came out at four different levels (-25.2, -45.2, -44.7, -52.8 dBFS mean) — desktop loopback would have given four identical mixes |
+| **A complete take** | **proven** 19 Oct 2026: picture and sound muxed with the computed offset into HEVC + FLAC, audio starting at exactly the offset the report gave |
+| Hook surviving a device reset | handled but untested: a failure in the read-back path drops the cached surfaces so the next frame rebuilds them |
+| Window capture, daemon | compile; unproven at runtime |
 | More than a handful of simultaneous windows | untested |
 | 4K | untested |
 

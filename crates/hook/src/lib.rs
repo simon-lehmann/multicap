@@ -307,7 +307,7 @@ fn grab(shared: &Shared, device: &IDirect3DDevice9) -> Result<(), (HookError, i3
         if stale {
             *guard = Some(make_readback(device, &desc)?);
         }
-        let readback = guard.as_ref().expect("read-back surfaces just created");
+        let readback = guard.take().expect("read-back surfaces just created");
 
         // Multisampled frames go via the plain intermediate; others go straight.
         let source = match &readback.resolve {
@@ -329,15 +329,18 @@ fn grab(shared: &Shared, device: &IDirect3DDevice9) -> Result<(), (HookError, i3
         // The one unavoidable cost of the Direct3D 9 path: the frame comes back
         // across the bus into system memory. Plain D3D9 has no shared textures,
         // so there is nowhere else to put it.
-        device
-            .GetRenderTargetData(source, &readback.sysmem)
-            .map_err(|e| (HookError::ReadBackFailed, e.code().0))?;
+        if let Err(e) = device.GetRenderTargetData(source, &readback.sysmem) {
+            return Err((HookError::ReadBackFailed, e.code().0));
+        }
 
         let mut locked = D3DLOCKED_RECT::default();
-        readback
-            .sysmem
-            .LockRect(&mut locked, std::ptr::null(), D3DLOCK_READONLY as u32)
-            .map_err(|e| (HookError::LockFailed, e.code().0))?;
+        if let Err(e) =
+            readback
+                .sysmem
+                .LockRect(&mut locked, std::ptr::null(), D3DLOCK_READONLY as u32)
+        {
+            return Err((HookError::LockFailed, e.code().0));
+        }
 
         let mut qpc = 0i64;
         let _ = QueryPerformanceCounter(&mut qpc);
@@ -356,6 +359,8 @@ fn grab(shared: &Shared, device: &IDirect3DDevice9) -> Result<(), (HookError, i3
         );
 
         let _ = readback.sysmem.UnlockRect();
+        // Put them back for the next frame.
+        *guard = Some(readback);
         Ok(())
     }
 }

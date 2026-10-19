@@ -119,6 +119,8 @@ mod windows_main {
                     .map_err(|_| Error::msg("--seconds must be a number"))?;
                 let out = flag(&args[1..], "--out");
                 let dir = flag(&args[1..], "--dir");
+                // A take wants sound, so it is recorded unless refused.
+                let audio = !args[1..].iter().any(|a| a == "--no-audio");
                 if pids.len() > 1 && out.is_some() {
                     return Err(Error::msg(
                         "several pids write several files: use --dir, not --out",
@@ -129,6 +131,7 @@ mod windows_main {
                     out.as_deref(),
                     dir.as_deref(),
                     Duration::from_secs_f64(seconds),
+                    audio,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&reports).unwrap());
                 encode::shutdown()
@@ -223,6 +226,12 @@ mod windows_main {
         constant_quality: bool,
         cadence: Option<multicap::timing::Cadence>,
         reads: multicap::hooksrc::ReadStats,
+        audio: Option<multicap::audio::AudioResult>,
+        /// Seconds to shift the sound by to line it up with the picture.
+        /// Computed from two timestamps off the same performance counter: the
+        /// hook stamps each frame, the audio engine stamps each buffer.
+        audio_offset_seconds: Option<f64>,
+        ffmpeg_hint: Option<String>,
     }
 
     /// Record several hooked games at once, each to its own file.
@@ -237,6 +246,7 @@ mod windows_main {
         out: Option<&str>,
         dir: Option<&str>,
         how_long: Duration,
+        audio: bool,
     ) -> Result<Vec<HookReport>> {
         let mut threads = Vec::new();
         for &pid in pids {
@@ -254,7 +264,7 @@ mod windows_main {
             threads.push(std::thread::spawn(move || {
                 unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
                     .map_err(|e| e.to_string())?;
-                record_from_hook(pid, &file, how_long).map_err(|e| e.to_string())
+                record_from_hook(pid, &file, how_long, audio).map_err(|e| e.to_string())
             }));
         }
 
@@ -279,9 +289,21 @@ mod windows_main {
 
     /// Record from a graphics hook rather than from the desktop. This is the
     /// path that needs no display output at all.
-    fn record_from_hook(pid: u32, out: &str, how_long: Duration) -> Result<HookReport> {
+    fn record_from_hook(
+        pid: u32,
+        out: &str,
+        how_long: Duration,
+        want_audio: bool,
+    ) -> Result<HookReport> {
         let mut src = multicap::hooksrc::HookSource::open(pid)?;
         let dev = Device::new()?;
+
+        // Sound first: it has to be running before the first frame, or the take
+        // opens on a picture with nothing heard over it.
+        let audio_path = format!("{}.wav", out.trim_end_matches(".mp4"));
+        let audio = want_audio
+            .then(|| multicap::audio::AudioTake::start(pid, &audio_path))
+            .transpose()?;
 
         let mut encoder: Option<multicap::encode::Encoder> = None;
         let mut upload: Option<multicap::hooksrc::Upload> = None;
@@ -326,6 +348,19 @@ mod windows_main {
             times.push(time_100ns);
         }
 
+        // Stop the sound only once the picture is done, so it covers the whole
+        // take rather than ending a frame early.
+        let audio = match audio {
+            Some(a) => Some(a.finish()?),
+            None => None,
+        };
+        let audio_offset_seconds = match (&audio, times.first()) {
+            (Some(a), Some(&first_frame)) if a.first_qpc_100ns != 0 => Some(
+                (a.first_qpc_100ns - first_frame) as f64 / multicap::timing::TICKS_PER_SEC as f64,
+            ),
+            _ => None,
+        };
+
         let header = src.header();
         let (hook_captured, hook_dropped) = (header.captured, header.dropped);
         let namespace = format!("{:?}", src.namespace);
@@ -347,6 +382,14 @@ mod windows_main {
             constant_quality,
             cadence: (!times.is_empty()).then(|| multicap::timing::cadence(&times, 0)),
             reads,
+            ffmpeg_hint: audio_offset_seconds.map(|o| {
+                format!(
+                    "ffmpeg -i {} -itsoffset {:.4} -i {} -c:v copy -c:a flac -shortest out.mkv",
+                    out, o, audio_path
+                )
+            }),
+            audio,
+            audio_offset_seconds,
         })
     }
 

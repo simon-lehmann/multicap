@@ -8,7 +8,10 @@ multicap - record many Windows application windows at once
   multicap hook --pid N,M,... --dir D --seconds S
                                      record from injected graphics hooks: works
                                      with no display output at all. Several pids
-                                     record at once, one file each, one thread each
+                                     record at once, one file each, one thread each.
+                                     Each game's own sound is recorded beside its
+                                     picture as .wav (--no-audio to skip), with the
+                                     offset between them computed in the report
   multicap serve [--port 7788]       take orders as newline-delimited JSON
 
 A take config:
