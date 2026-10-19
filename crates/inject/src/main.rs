@@ -129,23 +129,32 @@ fn inject(pid: u32, dll: &str) -> Result<(), String> {
             .ok_or("LoadLibraryW not found".to_string())?;
         let start: LPTHREAD_START_ROUTINE = Some(std::mem::transmute(load));
 
-        let thread = CreateRemoteThread(proc, None, 0, start, Some(remote), 0, None)
-            .map_err(|e| format!("CreateRemoteThread: {e}"))?;
-        WaitForSingleObject(thread, INFINITE);
-
+        // A game busy loading has its loader lock held and LoadLibraryW can
+        // simply fail; seen once on the fourth of four clients, immediately
+        // after they all logged in. Retrying costs nothing and fixes it.
         let mut module = 0u32;
-        let _ = GetExitCodeThread(thread, &mut module);
-        let _ = CloseHandle(thread);
+        let mut attempts = 0;
+        while module == 0 && attempts < 4 {
+            if attempts > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            attempts += 1;
+            let thread = CreateRemoteThread(proc, None, 0, start, Some(remote), 0, None)
+                .map_err(|e| format!("CreateRemoteThread: {e}"))?;
+            WaitForSingleObject(thread, INFINITE);
+            let _ = GetExitCodeThread(thread, &mut module);
+            let _ = CloseHandle(thread);
+        }
         let _ = VirtualFreeEx(proc, remote, 0, MEM_RELEASE);
         let _ = CloseHandle(proc);
 
         if module == 0 {
             return Err(format!(
-                "LoadLibraryW returned 0 in pid {pid}: the DLL did not load (wrong architecture, \
-or a dependency is missing)"
+                "LoadLibraryW returned 0 in pid {pid} after {attempts} attempts: the DLL did not \
+load (wrong architecture, or a dependency is missing)"
             ));
         }
-        println!("{{\"injected\": {pid}, \"module\": {module}}}");
+        println!("{{\"injected\": {pid}, \"module\": {module}, \"attempts\": {attempts}}}");
     }
     Ok(())
 }

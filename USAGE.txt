@@ -5,8 +5,10 @@ multicap - record many Windows application windows at once
   multicap record --json '{...}' --seconds 12
   multicap record --config take.json --seconds 12
   multicap hook --pid N --out F.mp4 --seconds S
-                                     record from an injected graphics hook: works
-                                     with no display output at all
+  multicap hook --pid N,M,... --dir D --seconds S
+                                     record from injected graphics hooks: works
+                                     with no display output at all. Several pids
+                                     record at once, one file each, one thread each
   multicap serve [--port 7788]       take orders as newline-delimited JSON
 
 A take config:

@@ -107,18 +107,30 @@ mod windows_main {
             }
             "hook" => {
                 encode::startup()?;
-                let pid: u32 = flag(&args[1..], "--pid")
-                    .ok_or_else(|| Error::msg("hook needs --pid"))?
-                    .parse()
-                    .map_err(|_| Error::msg("--pid must be a number"))?;
-                let out = flag(&args[1..], "--out")
-                    .ok_or_else(|| Error::msg("hook needs --out FILE.mp4"))?;
+                let pids: Vec<u32> = flag(&args[1..], "--pid")
+                    .ok_or_else(|| Error::msg("hook needs --pid N  (or --pid N,M,...)"))?
+                    .split(',')
+                    .map(|p| p.trim().parse::<u32>())
+                    .collect::<std::result::Result<_, _>>()
+                    .map_err(|_| Error::msg("--pid takes numbers separated by commas"))?;
                 let seconds: f64 = flag(&args[1..], "--seconds")
                     .ok_or_else(|| Error::msg("hook needs --seconds"))?
                     .parse()
                     .map_err(|_| Error::msg("--seconds must be a number"))?;
-                let report = record_from_hook(pid, &out, Duration::from_secs_f64(seconds))?;
-                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                let out = flag(&args[1..], "--out");
+                let dir = flag(&args[1..], "--dir");
+                if pids.len() > 1 && out.is_some() {
+                    return Err(Error::msg(
+                        "several pids write several files: use --dir, not --out",
+                    ));
+                }
+                let reports = record_hooks(
+                    &pids,
+                    out.as_deref(),
+                    dir.as_deref(),
+                    Duration::from_secs_f64(seconds),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&reports).unwrap());
                 encode::shutdown()
             }
             "serve" => {
@@ -211,6 +223,58 @@ mod windows_main {
         constant_quality: bool,
         cadence: Option<multicap::timing::Cadence>,
         reads: multicap::hooksrc::ReadStats,
+    }
+
+    /// Record several hooked games at once, each to its own file.
+    ///
+    /// One thread per game, and one D3D11 device and encoder per thread: COM
+    /// objects belong to the apartment that made them, and keeping them apart
+    /// means one game's encoder stalling cannot hold up another's frames. This
+    /// is the case the whole tool exists for, so it is the default shape rather
+    /// than a loop around a single recorder.
+    fn record_hooks(
+        pids: &[u32],
+        out: Option<&str>,
+        dir: Option<&str>,
+        how_long: Duration,
+    ) -> Result<Vec<HookReport>> {
+        let mut threads = Vec::new();
+        for &pid in pids {
+            let file = match (out, dir) {
+                (Some(o), _) => o.to_string(),
+                (None, Some(d)) => {
+                    let d = d.trim_end_matches(['/', '\\']);
+                    // Keep whatever separator the caller used, rather than
+                    // producing D:\dir/file.mp4.
+                    let sep = if d.contains('\\') { '\\' } else { '/' };
+                    format!("{d}{sep}hook-{pid}.mp4")
+                }
+                (None, None) => format!("hook-{pid}.mp4"),
+            };
+            threads.push(std::thread::spawn(move || {
+                unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
+                    .map_err(|e| e.to_string())?;
+                record_from_hook(pid, &file, how_long).map_err(|e| e.to_string())
+            }));
+        }
+
+        let mut reports = Vec::new();
+        let mut failures = Vec::new();
+        for (pid, t) in pids.iter().zip(threads) {
+            match t.join() {
+                Ok(Ok(r)) => reports.push(r),
+                Ok(Err(e)) => failures.push(format!("pid {pid}: {e}")),
+                Err(_) => failures.push(format!("pid {pid}: recorder thread panicked")),
+            }
+        }
+        // One game failing should not throw away the takes that worked.
+        if reports.is_empty() && !failures.is_empty() {
+            return Err(Error::msg(failures.join("; ")));
+        }
+        if !failures.is_empty() {
+            eprintln!("{}", serde_json::json!({ "failed": failures }));
+        }
+        Ok(reports)
     }
 
     /// Record from a graphics hook rather than from the desktop. This is the

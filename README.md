@@ -5,7 +5,8 @@ application's own audio — on the GPU's hardware encoder, from one small proces
 
 Built for filming several game clients side by side on one machine, where OBS is
 too heavy to run many of and an `ffmpeg` per window spends CPU you would rather
-give to the games.
+give to the games. Recording four games at once measured at about a quarter of
+one core — roughly an eighth of what the games themselves cost.
 
 ```
 multicap check                      # can this machine capture at all?
@@ -172,6 +173,8 @@ Audio stays lossless 32-bit float WAV until you decide otherwise.
 | Reading the hook from another Windows session | not possible in practice: the hook could not create a `Global\` mapping (no SeCreateGlobalPrivilege for an ordinary process), so the recorder must run in the same session as the game |
 | **Hook to finished file, end to end** | **proven** 19 Oct 2026: 600 frames in 10.01 s (59.81 fps), 0 timed out, 0 torn, 0 dropped. HEVC Main, bt709, limited range, labelled correctly at the source |
 | **Constant-quality rate control** | **proven** on AMD (RDNA 4): the encoder accepted a fixed quantiser. Still best effort elsewhere, and the report says which mode was actually used |
+| **Four games recorded at once** | **proven** 19 Oct 2026: four WoW clients, 2337 frames in 10 s (57.5–58.6 fps each), 0 dropped, 0 torn, 0 waits timed out, one file per client |
+| **Cost** | **measured** 19 Oct 2026: 2.73 s of CPU for 10.2 s of wall clock recording four clients — about 0.27 of one core, against 2.23 cores for the four games themselves. The recorder costs roughly an eighth of what it records |
 | Window capture, audio, daemon | compile; unproven at runtime |
 | More than a handful of simultaneous windows | untested |
 | 4K | untested |
