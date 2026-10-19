@@ -94,6 +94,27 @@ stored. This is the same split OBS makes with its `get-graphics-offsets` helper.
 In short: run one windowed client once to learn the offset, then fullscreen clients
 capture at full resolution with no display attached.
 
+### But fullscreen is a trap if you record more than one thing
+
+Exclusive fullscreen gets you full resolution, and it is wrong for this tool anyway:
+
+- A fullscreen Direct3D 9 device is **lost whenever the game stops being the
+  foreground window**, and a machine with no display may never hand it the
+  foreground back. It then sits there, alive and responding, presenting nothing.
+- Only **one** process can own the adapter exclusively, so several games cannot all
+  be fullscreen. Recording several at once is the entire point of this tool.
+
+Windowed clients have neither problem: they keep presenting while unfocused and
+while completely covered, which is what makes many-at-once work. But a windowed
+game sizes its back buffer from the desktop when it creates its device, and
+resizing its window afterwards does **not** make it render larger — tested, the
+back buffer stays put.
+
+So: for one game at full resolution, fullscreen plus a cached offset needs nothing
+else. For **several** games at full resolution with no monitor, give Windows a
+desktop of the size you want to record — a virtual display driver does that in
+software, with every monitor still switched off.
+
 ```
 multicap-inject list                 # processes that can be hooked
 multicap-inject <pid> multicap_hook.dll
@@ -149,9 +170,9 @@ Audio stays lossless 32-bit float WAV until you decide otherwise.
 | **Graphics hook on a Direct3D 9 game, monitor off** | **proven** 19 Oct 2026: injected into WoW 3.3.5a (32-bit, D3D9) on a machine with no display output. 289 frames, 289 `Present` calls, 0 dropped, correct colour and orientation |
 | **Full resolution with no display at all** | **proven** 19 Oct 2026: 1920x1080, 362 frames, 0 dropped, monitor off. Needs the game in fullscreen *and* a cached offset — see below |
 | Reading the hook from another Windows session | not possible in practice: the hook could not create a `Global\` mapping (no SeCreateGlobalPrivilege for an ordinary process), so the recorder must run in the same session as the game |
-| Window capture, encode, audio, daemon | compile; unproven at runtime |
-| Hook wired to the encoder | not done: frames reach shared memory, nothing writes an .mp4 from them yet |
-| Constant-quality rate control | best effort — support varies by vendor and driver; the report says which mode was actually used |
+| **Hook to finished file, end to end** | **proven** 19 Oct 2026: 600 frames in 10.01 s (59.81 fps), 0 timed out, 0 torn, 0 dropped. HEVC Main, bt709, limited range, labelled correctly at the source |
+| **Constant-quality rate control** | **proven** on AMD (RDNA 4): the encoder accepted a fixed quantiser. Still best effort elsewhere, and the report says which mode was actually used |
+| Window capture, audio, daemon | compile; unproven at runtime |
 | More than a handful of simultaneous windows | untested |
 | 4K | untested |
 

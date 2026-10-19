@@ -40,6 +40,20 @@ pub struct HookSource {
     last_sequence: u64,
     /// Scratch for one frame, so the hot loop does not allocate.
     scratch: Vec<u8>,
+    pub stats: ReadStats,
+}
+
+/// Why frames did not arrive. Guessing at this from a frame count alone wastes
+/// far more time than counting it.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ReadStats {
+    /// The wait returned without the hook signalling a frame.
+    pub timeouts: u64,
+    /// Woke up, but the published slot held a frame already delivered.
+    pub stale: u64,
+    /// The hook overwrote the slot while it was being copied.
+    pub torn: u64,
+    pub delivered: u64,
 }
 
 impl HookSource {
@@ -110,6 +124,7 @@ in another Windows session and could only create a Local mapping, which cannot b
             namespace,
             last_sequence: 0,
             scratch: Vec::new(),
+            stats: ReadStats::default(),
         })
     }
 
@@ -128,15 +143,18 @@ in another Windows session and could only create a Local mapping, which cannot b
     /// same unit Media Foundation and the rest of this crate use.
     pub fn next_frame(&mut self, timeout_ms: u32) -> Result<Option<(FrameInfo, &[u8], i64)>> {
         if unsafe { WaitForSingleObject(self.frame_event, timeout_ms) } != WAIT_OBJECT_0 {
+            self.stats.timeouts += 1;
             return Ok(None);
         }
         let header = self.header();
         let slot = header.ready_slot;
         if slot as usize >= SLOTS {
+            self.stats.stale += 1;
             return Ok(None);
         }
         let info = header.info[slot as usize];
         if info.sequence == self.last_sequence || info.width == 0 {
+            self.stats.stale += 1;
             return Ok(None);
         }
 
@@ -155,9 +173,11 @@ in another Windows session and could only create a Local mapping, which cannot b
 
         // If the hook published again while we copied, this frame is torn.
         if self.header().info[slot as usize].sequence != info.sequence {
+            self.stats.torn += 1;
             return Ok(None);
         }
         self.last_sequence = info.sequence;
+        self.stats.delivered += 1;
 
         // The hook stamps raw performance-counter ticks; everything downstream
         // works in 100 ns units.

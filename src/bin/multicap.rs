@@ -76,6 +76,35 @@ mod windows_main {
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
                 encode::shutdown()
             }
+            // Diagnostic: stand up the GPU pieces one at a time and hold them,
+            // to find which of them disturbs a Direct3D 9 game on a machine with
+            // no display output.
+            "probe" => {
+                let stage = flag(&args[1..], "--stage").unwrap_or_else(|| "d3d11".into());
+                let hold: u64 = flag(&args[1..], "--seconds")
+                    .unwrap_or_else(|| "8".into())
+                    .parse()
+                    .unwrap_or(8);
+                println!("{}", serde_json::json!({ "stage": stage, "holding": hold }));
+                let _dev = (stage != "none").then(Device::new).transpose()?;
+                if stage == "encoder" {
+                    encode::startup()?;
+                    let d = _dev.as_ref().expect("device for encoder probe");
+                    let out = flag(&args[1..], "--out")
+                        .unwrap_or_else(|| "D:\\wow-sandbox\\probe.mp4".into());
+                    let e = multicap::encode::Encoder::new(d, &out, Default::default())?;
+                    println!(
+                        "{}",
+                        serde_json::json!({ "encoder": "created",
+                        "constant_quality": e.constant_quality })
+                    );
+                    std::thread::sleep(Duration::from_secs(hold));
+                    drop(e);
+                    return encode::shutdown();
+                }
+                std::thread::sleep(Duration::from_secs(hold));
+                Ok(())
+            }
             "hook" => {
                 encode::startup()?;
                 let pid: u32 = flag(&args[1..], "--pid")
@@ -181,6 +210,7 @@ mod windows_main {
         height: u32,
         constant_quality: bool,
         cadence: Option<multicap::timing::Cadence>,
+        reads: multicap::hooksrc::ReadStats,
     }
 
     /// Record from a graphics hook rather than from the desktop. This is the
@@ -235,6 +265,7 @@ mod windows_main {
         let header = src.header();
         let (hook_captured, hook_dropped) = (header.captured, header.dropped);
         let namespace = format!("{:?}", src.namespace);
+        let reads = src.stats;
         let frames = match encoder {
             Some(e) => e.finish()?,
             None => 0,
@@ -251,6 +282,7 @@ mod windows_main {
             height: h,
             constant_quality,
             cadence: (!times.is_empty()).then(|| multicap::timing::cadence(&times, 0)),
+            reads,
         })
     }
 
