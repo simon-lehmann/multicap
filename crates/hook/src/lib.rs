@@ -40,6 +40,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
 use shmem::Shared;
 
 mod dump;
+mod offsets;
 mod status;
 
 /// `IDirect3DDevice9::Present` is entry 17 of the COM vtable. The index is
@@ -127,6 +128,17 @@ fn install() {
     };
     let shared = SHARED.get_or_init(|| shared);
 
+    // Prefer a cached offset into d3d9.dll over creating a device of our own.
+    // A game holding exclusive fullscreen owns the adapter, and a second device
+    // in its process then fails with D3DERR_DEVICELOST — so the offset is found
+    // once while some client is windowed and reused from then on. This is why
+    // OBS ships a separate `get-graphics-offsets` helper.
+    if let Some((p, sp)) = offsets::load() {
+        install_detours(shared, p, sp);
+        status::publish(pid, shared);
+        return;
+    }
+
     let (present, swap_present) = match find_present() {
         Ok(p) => p,
         Err((e, hr)) => {
@@ -165,8 +177,40 @@ fn install() {
         }
     }
 
+    // Found the hard way; save it so no later hook has to make a device.
+    offsets::save(present, swap_present);
+
     shared.set_active(true);
     status::publish(pid, shared);
+}
+
+/// Place the detours on addresses already known, without making a device.
+fn install_detours(shared: &'static Shared, present: PresentFn, swap: Option<SwapPresentFn>) {
+    let detour = match unsafe { RawDetour::new(present as *const (), present_detour as *const ()) }
+    {
+        Ok(d) => d,
+        Err(_) => {
+            shared.fail(HookError::HookFailed, 0);
+            return;
+        }
+    };
+    if unsafe { detour.enable() }.is_err() {
+        shared.fail(HookError::HookFailed, 0);
+        return;
+    }
+    TRAMPOLINE.store(detour.trampoline() as *const () as usize, Ordering::SeqCst);
+    let _ = DETOUR.set(detour);
+
+    if let Some(sp) = swap {
+        if let Ok(d) = unsafe { RawDetour::new(sp as *const (), swap_present_detour as *const ()) }
+        {
+            if unsafe { d.enable() }.is_ok() {
+                SWAP_TRAMPOLINE.store(d.trampoline() as *const () as usize, Ordering::SeqCst);
+                let _ = SWAP_DETOUR.set(d);
+            }
+        }
+    }
+    shared.set_active(true);
 }
 
 /// Find the real address of `Present` by making a throwaway device and reading

@@ -76,6 +76,22 @@ mod windows_main {
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
                 encode::shutdown()
             }
+            "hook" => {
+                encode::startup()?;
+                let pid: u32 = flag(&args[1..], "--pid")
+                    .ok_or_else(|| Error::msg("hook needs --pid"))?
+                    .parse()
+                    .map_err(|_| Error::msg("--pid must be a number"))?;
+                let out = flag(&args[1..], "--out")
+                    .ok_or_else(|| Error::msg("hook needs --out FILE.mp4"))?;
+                let seconds: f64 = flag(&args[1..], "--seconds")
+                    .ok_or_else(|| Error::msg("hook needs --seconds"))?
+                    .parse()
+                    .map_err(|_| Error::msg("--seconds must be a number"))?;
+                let report = record_from_hook(pid, &out, Duration::from_secs_f64(seconds))?;
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                encode::shutdown()
+            }
             "serve" => {
                 encode::startup()?;
                 let port: u16 = flag(&args[1..], "--port")
@@ -149,6 +165,93 @@ mod windows_main {
             height: r.bottom - r.top,
         });
         TRUE
+    }
+
+    #[derive(serde::Serialize)]
+    struct HookReport {
+        pid: u32,
+        file: String,
+        namespace: String,
+        frames: u64,
+        /// What the hook itself saw, which is the number to compare against:
+        /// frames it captured but we never collected show up as the difference.
+        hook_captured: u64,
+        hook_dropped: u64,
+        width: u32,
+        height: u32,
+        constant_quality: bool,
+        cadence: Option<multicap::timing::Cadence>,
+    }
+
+    /// Record from a graphics hook rather than from the desktop. This is the
+    /// path that needs no display output at all.
+    fn record_from_hook(pid: u32, out: &str, how_long: Duration) -> Result<HookReport> {
+        let mut src = multicap::hooksrc::HookSource::open(pid)?;
+        let dev = Device::new()?;
+
+        let mut encoder: Option<multicap::encode::Encoder> = None;
+        let mut upload: Option<multicap::hooksrc::Upload> = None;
+        let mut times: Vec<i64> = Vec::new();
+        let (mut w, mut h) = (0u32, 0u32);
+        let mut constant_quality = false;
+
+        let until = Instant::now() + how_long;
+        while Instant::now() < until {
+            let Some((info, pixels, time_100ns)) = src.next_frame(100)? else {
+                continue;
+            };
+            if upload
+                .as_ref()
+                .is_none_or(|u| !u.matches(info.width, info.height))
+            {
+                upload = Some(multicap::hooksrc::Upload::new(
+                    &dev,
+                    info.width,
+                    info.height,
+                )?);
+            }
+            let up = upload.as_ref().expect("upload texture just created");
+            up.write(&dev, pixels, info.pitch)?;
+
+            if encoder.is_none() {
+                let mut cfg = multicap::encode::VideoConfig {
+                    width: info.width,
+                    height: info.height,
+                    ..Default::default()
+                };
+                cfg.fps = 60;
+                let e = multicap::encode::Encoder::new(&dev, out, cfg)?;
+                constant_quality = e.constant_quality;
+                (w, h) = (info.width, info.height);
+                encoder = Some(e);
+            }
+            encoder
+                .as_mut()
+                .expect("encoder created with the first frame")
+                .write(&up.texture, time_100ns)?;
+            times.push(time_100ns);
+        }
+
+        let header = src.header();
+        let (hook_captured, hook_dropped) = (header.captured, header.dropped);
+        let namespace = format!("{:?}", src.namespace);
+        let frames = match encoder {
+            Some(e) => e.finish()?,
+            None => 0,
+        };
+
+        Ok(HookReport {
+            pid,
+            file: out.to_string(),
+            namespace,
+            frames,
+            hook_captured,
+            hook_dropped,
+            width: w,
+            height: h,
+            constant_quality,
+            cadence: (!times.is_empty()).then(|| multicap::timing::cadence(&times, 0)),
+        })
     }
 
     fn record_for(cfg: TakeConfig, how_long: Duration) -> Result<TakeReport> {

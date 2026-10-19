@@ -126,19 +126,48 @@ impl HookError {
     }
 }
 
+/// Which Windows object namespace the hook's shared memory lives in.
+///
+/// `Local\` is private to one session. That is the right place for it when the
+/// recorder runs beside the games, which is the normal case, but it makes the
+/// hook invisible to anything in another session. `Global\` can be read from
+/// any session; creating a name there needs SeCreateGlobalPrivilege, which an
+/// ordinary interactive process does not have, so it is attempted and not
+/// relied on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Namespace {
+    Global,
+    Local,
+}
+
+impl Namespace {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Namespace::Global => "Global\\",
+            Namespace::Local => "Local\\",
+        }
+    }
+
+    /// Tried in this order: a reader in another session needs Global, and a
+    /// reader beside the game works with either.
+    pub fn candidates() -> [Namespace; 2] {
+        [Namespace::Global, Namespace::Local]
+    }
+}
+
 /// Names are per target process, so several games can be hooked at once.
-pub fn mapping_name(pid: u32) -> String {
-    format!("Local\\multicap_frames_{pid}")
+pub fn mapping_name(ns: Namespace, pid: u32) -> String {
+    format!("{}multicap_frames_{pid}", ns.prefix())
 }
 
 /// Signalled by the hook when a slot has been published.
-pub fn frame_event_name(pid: u32) -> String {
-    format!("Local\\multicap_frame_{pid}")
+pub fn frame_event_name(ns: Namespace, pid: u32) -> String {
+    format!("{}multicap_frame_{pid}", ns.prefix())
 }
 
 /// Signalled by the recorder to ask the hook to stop and unload.
-pub fn stop_event_name(pid: u32) -> String {
-    format!("Local\\multicap_stop_{pid}")
+pub fn stop_event_name(ns: Namespace, pid: u32) -> String {
+    format!("{}multicap_stop_{pid}", ns.prefix())
 }
 
 #[cfg(test)]
@@ -157,8 +186,12 @@ mod tests {
     }
 
     #[test]
-    fn names_are_per_process() {
-        assert_ne!(mapping_name(100), mapping_name(101));
-        assert!(mapping_name(42).starts_with("Local\\"));
+    fn names_are_per_process_and_per_namespace() {
+        assert_ne!(
+            mapping_name(Namespace::Local, 100),
+            mapping_name(Namespace::Local, 101)
+        );
+        assert!(mapping_name(Namespace::Local, 42).starts_with("Local\\"));
+        assert!(mapping_name(Namespace::Global, 42).starts_with("Global\\"));
     }
 }

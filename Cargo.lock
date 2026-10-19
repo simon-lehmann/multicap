@@ -80,6 +80,7 @@ dependencies = [
 name = "multicap"
 version = "0.1.0"
 dependencies = [
+ "multicap-ipc",
  "serde",
  "serde_json",
  "thiserror",

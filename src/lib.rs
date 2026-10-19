@@ -19,6 +19,8 @@ pub mod d3d;
 #[cfg(windows)]
 pub mod encode;
 #[cfg(windows)]
+pub mod hooksrc;
+#[cfg(windows)]
 pub mod preflight;
 #[cfg(windows)]
 pub mod session;

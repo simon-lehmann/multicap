@@ -52,7 +52,7 @@ fn write_once(pid: u32, shared: &Shared) {
             "{{\"pid\": {}, \"active\": {}, \"captured\": {}, \"dropped\": {}, ",
             "\"error\": \"{}\", \"hresult\": \"{:#010x}\", \"width\": {}, \"height\": {}, ",
             "\"pitch\": {}, \"d3dformat\": {}, \"hooked\": {}, ",
-            "\"present_calls\": {}, \"swapchain_present_calls\": {}}}\n"
+            "\"present_calls\": {}, \"swapchain_present_calls\": {}, \"namespace\": \"{}\"}}\n"
         ),
         pid,
         active == 1,
@@ -67,6 +67,7 @@ fn write_once(pid: u32, shared: &Shared) {
         crate::TRAMPOLINE.load(Ordering::SeqCst) != 0,
         pc,
         spc,
+        shared.namespace.prefix().trim_end_matches('\\'),
     );
     if let Ok(mut f) = std::fs::File::create(path(pid)) {
         let _ = f.write_all(text.as_bytes());

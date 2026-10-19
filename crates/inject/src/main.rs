@@ -158,12 +158,30 @@ fn unused(_: PCSTR) {}
 /// There is no way to attach a debugger to a hook living in someone's game, so
 /// this is how we find out whether it is working and, if not, why.
 fn status(pid: u32) -> Result<(), String> {
-    use multicap_ipc::{mapping_name, Header, HookError, MAGIC};
+    use multicap_ipc::{mapping_name, Header, HookError, Namespace, MAGIC};
     use windows::Win32::System::Memory::{MapViewOfFile, OpenFileMappingW, FILE_MAP_READ};
 
     unsafe {
-        let mapping = OpenFileMappingW(FILE_MAP_READ.0, false, &HSTRING::from(mapping_name(pid)))
-            .map_err(|e| format!("no hook in pid {pid}: {e}"))?;
+        // The hook puts its memory in whichever namespace it was allowed to use,
+        // so look in both. Reading from another Windows session only works if it
+        // managed Global.
+        let mut found = None;
+        for ns in Namespace::candidates() {
+            if let Ok(m) = OpenFileMappingW(
+                FILE_MAP_READ.0,
+                false,
+                &HSTRING::from(mapping_name(ns, pid)),
+            ) {
+                found = Some(m);
+                break;
+            }
+        }
+        let mapping = found.ok_or_else(|| {
+            format!(
+                "no hook found in pid {pid} from this session (it may be running in another \
+Windows session, where only a Global mapping is visible)"
+            )
+        })?;
         let view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, Header::size());
         if view.Value.is_null() {
             return Err("could not map the hook's shared memory".into());

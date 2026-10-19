@@ -75,6 +75,25 @@ The hook costs something: plain Direct3D 9 has no shared textures, so the frame 
 read back into system memory rather than staying on the GPU. Use window capture
 when you can and the hook when you must.
 
+### Resolution, and why the offset is cached
+
+With no display output Windows falls back to a 1024x768 desktop, and a *windowed*
+game renders at that size — the hook faithfully captures a small picture. Put the
+game in **fullscreen** at the resolution you want and it renders at that size
+regardless of what is plugged in.
+
+That creates a second problem. Finding `Present` means reading a real vtable, which
+means having a device, and a game in exclusive fullscreen owns the adapter: a second
+device created inside it fails with `D3DERR_DEVICELOST`. So the hook records the
+function's *offset* within d3d9.dll the first time it succeeds — while some client
+is windowed — into `%TEMP%\multicap-d3d9-offsets.txt`, and afterwards adds that
+offset to wherever d3d9.dll happens to be loaded. The offset is stable for a given
+DLL; the base is not, because of address space randomisation, so only the offset is
+stored. This is the same split OBS makes with its `get-graphics-offsets` helper.
+
+In short: run one windowed client once to learn the offset, then fullscreen clients
+capture at full resolution with no display attached.
+
 ```
 multicap-inject list                 # processes that can be hooked
 multicap-inject <pid> multicap_hook.dll
@@ -128,7 +147,8 @@ Audio stays lossless 32-bit float WAV until you decide otherwise.
 | Frame cadence logic | unit-tested on every platform in CI |
 | Shared memory layout identical 32-bit and 64-bit | asserted at compile time, both targets |
 | **Graphics hook on a Direct3D 9 game, monitor off** | **proven** 19 Oct 2026: injected into WoW 3.3.5a (32-bit, D3D9) on a machine with no display output. 289 frames, 289 `Present` calls, 0 dropped, correct colour and orientation |
-| Hook resolution | follows the game's back buffer. With no display the desktop falls back to 1024x768 and a windowed game renders at that size — fix the game's resolution, not the hook |
+| **Full resolution with no display at all** | **proven** 19 Oct 2026: 1920x1080, 362 frames, 0 dropped, monitor off. Needs the game in fullscreen *and* a cached offset — see below |
+| Reading the hook from another Windows session | not possible in practice: the hook could not create a `Global\` mapping (no SeCreateGlobalPrivilege for an ordinary process), so the recorder must run in the same session as the game |
 | Window capture, encode, audio, daemon | compile; unproven at runtime |
 | Hook wired to the encoder | not done: frames reach shared memory, nothing writes an .mp4 from them yet |
 | Constant-quality rate control | best effort — support varies by vendor and driver; the report says which mode was actually used |
