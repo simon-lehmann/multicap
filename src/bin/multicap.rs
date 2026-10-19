@@ -136,6 +136,33 @@ mod windows_main {
                 println!("{}", serde_json::to_string_pretty(&reports).unwrap());
                 encode::shutdown()
             }
+            // Relay one request to a daemon on this machine and print its
+            // answer. The daemon listens on loopback inside the desktop session;
+            // a caller over SSH lands in another session and cannot reach the
+            // games, but it can run this.
+            "call" => {
+                let port: u16 = flag(&args[1..], "--port")
+                    .unwrap_or_else(|| "7788".into())
+                    .parse()
+                    .map_err(|_| Error::msg("--port must be a number"))?;
+                let body = match args.get(1).map(String::as_str) {
+                    Some("-") | None => {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                        buf
+                    }
+                    Some(j) => j.to_string(),
+                };
+                let mut stream = TcpStream::connect(("127.0.0.1", port))
+                    .map_err(|e| Error::msg(format!("no daemon on port {port}: {e}")))?;
+                stream.write_all(body.trim().as_bytes())?;
+                stream.write_all(b"\n")?;
+                stream.flush()?;
+                let mut reply = String::new();
+                BufReader::new(&stream).read_line(&mut reply)?;
+                print!("{reply}");
+                Ok(())
+            }
             "serve" => {
                 encode::startup()?;
                 let port: u16 = flag(&args[1..], "--port")
@@ -213,6 +240,8 @@ mod windows_main {
 
     #[derive(serde::Serialize)]
     struct HookReport {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        take: Option<String>,
         pid: u32,
         file: String,
         namespace: String,
@@ -248,6 +277,20 @@ mod windows_main {
         how_long: Duration,
         audio: bool,
     ) -> Result<Vec<HookReport>> {
+        let never = Arc::new(AtomicBool::new(false));
+        record_hooks_until(pids, out, dir, how_long, audio, never)
+    }
+
+    /// The same, but stoppable: the daemon does not know a take's length in
+    /// advance, because a run sheet ends a take when the action ends.
+    fn record_hooks_until(
+        pids: &[u32],
+        out: Option<&str>,
+        dir: Option<&str>,
+        how_long: Duration,
+        audio: bool,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Vec<HookReport>> {
         let mut threads = Vec::new();
         for &pid in pids {
             let file = match (out, dir) {
@@ -261,10 +304,11 @@ mod windows_main {
                 }
                 (None, None) => format!("hook-{pid}.mp4"),
             };
+            let stop = stop.clone();
             threads.push(std::thread::spawn(move || {
                 unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
                     .map_err(|e| e.to_string())?;
-                record_from_hook(pid, &file, how_long, audio).map_err(|e| e.to_string())
+                record_from_hook(pid, &file, how_long, audio, stop).map_err(|e| e.to_string())
             }));
         }
 
@@ -294,6 +338,7 @@ mod windows_main {
         out: &str,
         how_long: Duration,
         want_audio: bool,
+        stop: Arc<AtomicBool>,
     ) -> Result<HookReport> {
         let mut src = multicap::hooksrc::HookSource::open(pid)?;
         let dev = Device::new()?;
@@ -312,7 +357,7 @@ mod windows_main {
         let mut constant_quality = false;
 
         let until = Instant::now() + how_long;
-        while Instant::now() < until {
+        while Instant::now() < until && !stop.load(Ordering::Relaxed) {
             let Some((info, pixels, time_100ns)) = src.next_frame(100)? else {
                 continue;
             };
@@ -371,6 +416,7 @@ mod windows_main {
         };
 
         Ok(HookReport {
+            take: None,
             pid,
             file: out.to_string(),
             namespace,
@@ -422,6 +468,15 @@ mod windows_main {
         stop: Arc<AtomicBool>,
         progress: Arc<Mutex<Vec<(String, u64, u64)>>>,
         thread: JoinHandle<std::result::Result<TakeReport, String>>,
+    }
+
+    /// A take recorded through injected graphics hooks rather than window
+    /// capture. Started and stopped by the caller, because a run sheet ends a
+    /// take when the action ends, not after a number of seconds agreed up front.
+    struct HookRunning {
+        pids: Vec<u32>,
+        stop: Arc<AtomicBool>,
+        thread: JoinHandle<std::result::Result<Vec<HookReport>, String>>,
     }
 
     /// Each take owns a thread, and owns it completely: the D3D device, the
@@ -485,9 +540,10 @@ mod windows_main {
         std::io::stdout().flush()?;
 
         let takes: Arc<Mutex<HashMap<String, Running>>> = Arc::new(Mutex::new(HashMap::new()));
+        let hooks: Arc<Mutex<HashMap<String, HookRunning>>> = Arc::new(Mutex::new(HashMap::new()));
         for stream in listener.incoming() {
             let stream = stream?;
-            if handle(stream, &takes)? {
+            if handle(stream, &takes, &hooks)? {
                 break;
             }
         }
@@ -495,7 +551,11 @@ mod windows_main {
     }
 
     /// Returns true when the client asked the daemon to quit.
-    fn handle(stream: TcpStream, takes: &Arc<Mutex<HashMap<String, Running>>>) -> Result<bool> {
+    fn handle(
+        stream: TcpStream,
+        takes: &Arc<Mutex<HashMap<String, Running>>>,
+        hooks: &Arc<Mutex<HashMap<String, HookRunning>>>,
+    ) -> Result<bool> {
         let mut out = stream.try_clone()?;
         let reader = BufReader::new(stream);
         for line in reader.lines() {
@@ -558,6 +618,101 @@ mod windows_main {
                         }
                     }
                 }
+                // {"cmd":"hook-start","take":"s04-t1","pids":[123,456],
+                //  "dir":"D:\\wow-sandbox\\rec","audio":true,"max_seconds":600}
+                "hook-start" => {
+                    let take = req
+                        .get("take")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let pids: Vec<u32> = req
+                        .get("pids")
+                        .and_then(|p| p.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u32))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let dir = req
+                        .get("dir")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("D:\\wow-sandbox\\rec")
+                        .to_string();
+                    let audio = req.get("audio").and_then(|a| a.as_bool()).unwrap_or(true);
+                    // An upper bound so a take nobody stops cannot fill the disk.
+                    let cap = req
+                        .get("max_seconds")
+                        .and_then(|m| m.as_f64())
+                        .unwrap_or(900.0);
+
+                    if take.is_empty() || pids.is_empty() {
+                        serde_json::json!({ "error": "hook-start needs take and pids" })
+                    } else {
+                        let mut map = hooks.lock().unwrap();
+                        let busy: Vec<u32> = map
+                            .values()
+                            .flat_map(|h| h.pids.iter().copied())
+                            .filter(|p| pids.contains(p))
+                            .collect();
+                        if map.contains_key(&take) {
+                            serde_json::json!({ "error": format!("take already running: {take}") })
+                        } else if !busy.is_empty() {
+                            // One game cannot be in two takes: the second encoder
+                            // would get every other frame.
+                            serde_json::json!({ "error": "already recording", "pids": busy })
+                        } else {
+                            let stop = Arc::new(AtomicBool::new(false));
+                            let (s2, p2, t) = (stop.clone(), pids.clone(), take.clone());
+                            let thread = std::thread::spawn(move || {
+                                record_hooks_until(
+                                    &p2,
+                                    None,
+                                    Some(&dir),
+                                    Duration::from_secs_f64(cap),
+                                    audio,
+                                    s2,
+                                )
+                                .map(|mut v| {
+                                    for r in &mut v {
+                                        r.take = Some(t.clone());
+                                    }
+                                    v
+                                })
+                                .map_err(|e| e.to_string())
+                            });
+                            map.insert(
+                                take.clone(),
+                                HookRunning {
+                                    pids: pids.clone(),
+                                    stop,
+                                    thread,
+                                },
+                            );
+                            serde_json::json!({ "started": take, "pids": pids })
+                        }
+                    }
+                }
+                "hook-stop" => {
+                    let take = req
+                        .get("take")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let running = hooks.lock().unwrap().remove(&take);
+                    match running {
+                        None => serde_json::json!({ "error": format!("no such take: {take}") }),
+                        Some(h) => {
+                            h.stop.store(true, Ordering::Relaxed);
+                            match h.thread.join() {
+                                Ok(Ok(reports)) => serde_json::to_value(reports).unwrap(),
+                                Ok(Err(e)) => serde_json::json!({ "error": e }),
+                                Err(_) => serde_json::json!({ "error": "take thread panicked" }),
+                            }
+                        }
+                    }
+                }
                 "status" => {
                     let map = takes.lock().unwrap();
                     let running: Vec<_> = map
@@ -572,10 +727,17 @@ mod windows_main {
                             })
                         })
                         .collect();
-                    serde_json::json!({ "running": running })
+                    let hook_running: Vec<_> = hooks
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(name, h)| serde_json::json!({ "take": name, "pids": h.pids }))
+                        .collect();
+                    serde_json::json!({ "running": running, "hooks": hook_running })
                 }
                 "quit" => {
-                    let names: Vec<String> = takes.lock().unwrap().keys().cloned().collect();
+                    let mut names: Vec<String> = takes.lock().unwrap().keys().cloned().collect();
+                    names.extend(hooks.lock().unwrap().keys().cloned());
                     if !names.is_empty() {
                         // Refuse rather than silently truncate someone's take.
                         reply(
