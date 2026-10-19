@@ -1,0 +1,364 @@
+//! multicap: record many Windows application windows at once.
+//!
+//!   multicap check                 is this machine able to capture at all
+//!   multicap windows               capturable windows, with handles and pids
+//!   multicap record ...            one take, then exit
+//!   multicap serve --port 7788     take orders over a loopback socket
+//!
+//! Everything prints JSON on stdout, so a pipeline never has to parse prose.
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("multicap records Windows applications and only builds for Windows.");
+    std::process::exit(2);
+}
+
+#[cfg(windows)]
+fn main() {
+    if let Err(e) = windows_main::run() {
+        eprintln!("{}", serde_json::json!({ "error": e.to_string() }));
+        std::process::exit(1);
+    }
+}
+
+#[cfg(windows)]
+mod windows_main {
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
+
+    use multicap::d3d::Device;
+    use multicap::encode;
+    use multicap::error::{Error, Result};
+    use multicap::preflight;
+    use multicap::session::{Take, TakeConfig, TakeReport};
+
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    pub fn run() -> Result<()> {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let cmd = args.first().map(String::as_str).unwrap_or("help");
+
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
+
+        match cmd {
+            "check" => {
+                let d = preflight::displays()?;
+                println!("{}", serde_json::to_string_pretty(&d).unwrap());
+                if !d.ok {
+                    std::process::exit(3);
+                }
+                Ok(())
+            }
+            "windows" => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&list_windows()?).unwrap()
+                );
+                Ok(())
+            }
+            "record" => {
+                encode::startup()?;
+                let cfg = read_config(&args[1..])?;
+                let seconds: f64 = flag(&args[1..], "--seconds")
+                    .ok_or_else(|| Error::msg("record needs --seconds"))?
+                    .parse()
+                    .map_err(|_| Error::msg("--seconds must be a number"))?;
+                let report = record_for(cfg, Duration::from_secs_f64(seconds))?;
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                encode::shutdown()
+            }
+            "serve" => {
+                encode::startup()?;
+                let port: u16 = flag(&args[1..], "--port")
+                    .unwrap_or_else(|| "7788".into())
+                    .parse()
+                    .map_err(|_| Error::msg("--port must be a number"))?;
+                serve(port)
+            }
+            _ => {
+                eprintln!("{}", include_str!("../../USAGE.txt"));
+                Ok(())
+            }
+        }
+    }
+
+    fn flag(args: &[String], name: &str) -> Option<String> {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    }
+
+    /// A take is described by JSON, from `--config FILE` or `--json '{...}'`.
+    /// Describing eight windows on a command line is worse for everyone.
+    fn read_config(args: &[String]) -> Result<TakeConfig> {
+        let text = if let Some(p) = flag(args, "--config") {
+            std::fs::read_to_string(p)?
+        } else if let Some(j) = flag(args, "--json") {
+            j
+        } else {
+            return Err(Error::msg("record needs --config FILE or --json '{...}'"));
+        };
+        serde_json::from_str(&text).map_err(|e| Error::msg(format!("bad take config: {e}")))
+    }
+
+    #[derive(serde::Serialize)]
+    struct WindowInfo {
+        hwnd: isize,
+        pid: u32,
+        title: String,
+        width: i32,
+        height: i32,
+    }
+
+    fn list_windows() -> Result<Vec<WindowInfo>> {
+        let mut found: Vec<WindowInfo> = Vec::new();
+        unsafe {
+            let _ = EnumWindows(Some(enum_proc), LPARAM(&mut found as *mut _ as isize));
+        }
+        found.retain(|w| w.width > 0 && w.height > 0 && !w.title.is_empty());
+        Ok(found)
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = &mut *(lparam.0 as *mut Vec<WindowInfo>);
+        if !IsWindowVisible(hwnd).as_bool() {
+            return TRUE;
+        }
+        let mut buf = [0u16; 512];
+        let n = GetWindowTextW(hwnd, &mut buf);
+        let title = String::from_utf16_lossy(&buf[..n as usize]);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let mut r = RECT::default();
+        let _ = GetClientRect(hwnd, &mut r);
+        out.push(WindowInfo {
+            hwnd: hwnd.0 as isize,
+            pid,
+            title,
+            width: r.right - r.left,
+            height: r.bottom - r.top,
+        });
+        TRUE
+    }
+
+    fn record_for(cfg: TakeConfig, how_long: Duration) -> Result<TakeReport> {
+        guard_display()?;
+        // See the note on `TexturePool::new`: the device is multithread-protected.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let dev = Arc::new(Device::new()?);
+        let mut take = Take::start(dev, cfg)?;
+        let until = Instant::now() + how_long;
+        while Instant::now() < until {
+            take.pump()?;
+            std::thread::sleep(Duration::from_millis(4));
+        }
+        take.stop()
+    }
+
+    /// Never start a take that is certain to produce nothing.
+    fn guard_display() -> Result<()> {
+        let d = preflight::displays()?;
+        if !d.ok {
+            return Err(Error::msg(d.note));
+        }
+        Ok(())
+    }
+
+    // ---- the daemon ------------------------------------------------------
+
+    struct Running {
+        stop: Arc<AtomicBool>,
+        progress: Arc<Mutex<Vec<(String, u64, u64)>>>,
+        thread: JoinHandle<std::result::Result<TakeReport, String>>,
+    }
+
+    /// Each take owns a thread, and owns it completely: the D3D device, the
+    /// capture sessions and the encoders are COM objects with apartment rules,
+    /// so they are created on that thread and never cross to another. Only plain
+    /// data (the config in, the report out) passes the boundary.
+    ///
+    /// The thread signals once it is either recording or has failed, so the
+    /// client that asked for the take learns about a bad window handle straight
+    /// away instead of at `stop`.
+    fn start_take(cfg: TakeConfig) -> Result<Running> {
+        guard_display()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let (s, p) = (stop.clone(), progress.clone());
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<std::result::Result<(), String>>();
+
+        let thread = std::thread::spawn(move || {
+            unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
+                .map_err(|e| e.to_string())?;
+            let dev = match Device::new() {
+                // See the note on `TexturePool::new`.
+                #[allow(clippy::arc_with_non_send_sync)]
+                Ok(d) => Arc::new(d),
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e.to_string()));
+                    return Err(e.to_string());
+                }
+            };
+            let mut take = match Take::start(dev, cfg) {
+                Ok(t) => t,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e.to_string()));
+                    return Err(e.to_string());
+                }
+            };
+            let _ = ready_tx.send(Ok(()));
+
+            while !s.load(Ordering::Relaxed) {
+                take.pump().map_err(|e| e.to_string())?;
+                *p.lock().unwrap() = take.progress();
+                std::thread::sleep(Duration::from_millis(4));
+            }
+            take.stop().map_err(|e| e.to_string())
+        });
+
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Running {
+                stop,
+                progress,
+                thread,
+            }),
+            Ok(Err(e)) => Err(Error::msg(e)),
+            Err(_) => Err(Error::msg("take thread died before it started recording")),
+        }
+    }
+
+    fn serve(port: u16) -> Result<()> {
+        let listener = TcpListener::bind(("127.0.0.1", port))?;
+        println!("{}", serde_json::json!({ "listening": port }));
+        std::io::stdout().flush()?;
+
+        let takes: Arc<Mutex<HashMap<String, Running>>> = Arc::new(Mutex::new(HashMap::new()));
+        for stream in listener.incoming() {
+            let stream = stream?;
+            if handle(stream, &takes)? {
+                break;
+            }
+        }
+        encode::shutdown()
+    }
+
+    /// Returns true when the client asked the daemon to quit.
+    fn handle(stream: TcpStream, takes: &Arc<Mutex<HashMap<String, Running>>>) -> Result<bool> {
+        let mut out = stream.try_clone()?;
+        let reader = BufReader::new(stream);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let req: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(e) => {
+                    reply(
+                        &mut out,
+                        serde_json::json!({ "error": format!("bad json: {e}") }),
+                    )?;
+                    continue;
+                }
+            };
+            let cmd = req.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+            let answer = match cmd {
+                "check" => preflight::displays()
+                    .map(|d| serde_json::to_value(d).unwrap())
+                    .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() })),
+                "windows" => list_windows()
+                    .map(|w| serde_json::to_value(w).unwrap())
+                    .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() })),
+                "start" => match serde_json::from_value::<TakeConfig>(req.clone()) {
+                    Ok(cfg) => {
+                        let name = cfg.name.clone();
+                        let mut map = takes.lock().unwrap();
+                        if map.contains_key(&name) {
+                            serde_json::json!({ "error": format!("take already running: {name}") })
+                        } else {
+                            match start_take(cfg) {
+                                Ok(r) => {
+                                    map.insert(name.clone(), r);
+                                    serde_json::json!({ "started": name })
+                                }
+                                Err(e) => serde_json::json!({ "error": e.to_string() }),
+                            }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("bad take config: {e}") }),
+                },
+                "stop" => {
+                    let name = req
+                        .get("take")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let running = takes.lock().unwrap().remove(&name);
+                    match running {
+                        None => serde_json::json!({ "error": format!("no such take: {name}") }),
+                        Some(r) => {
+                            r.stop.store(true, Ordering::Relaxed);
+                            match r.thread.join() {
+                                Ok(Ok(report)) => serde_json::to_value(report).unwrap(),
+                                Ok(Err(e)) => serde_json::json!({ "error": e }),
+                                Err(_) => serde_json::json!({ "error": "take thread panicked" }),
+                            }
+                        }
+                    }
+                }
+                "status" => {
+                    let map = takes.lock().unwrap();
+                    let running: Vec<_> = map
+                        .iter()
+                        .map(|(name, r)| {
+                            serde_json::json!({
+                                "take": name,
+                                "targets": r.progress.lock().unwrap().iter()
+                                    .map(|(l, kept, dropped)| serde_json::json!({
+                                        "label": l, "frames": kept, "dropped": dropped }))
+                                    .collect::<Vec<_>>(),
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({ "running": running })
+                }
+                "quit" => {
+                    let names: Vec<String> = takes.lock().unwrap().keys().cloned().collect();
+                    if !names.is_empty() {
+                        // Refuse rather than silently truncate someone's take.
+                        reply(
+                            &mut out,
+                            serde_json::json!({
+                                "error": "takes still running; stop them first",
+                                "running": names
+                            }),
+                        )?;
+                        continue;
+                    }
+                    reply(&mut out, serde_json::json!({ "quit": true }))?;
+                    return Ok(true);
+                }
+                other => serde_json::json!({ "error": format!("unknown command: {other}") }),
+            };
+            reply(&mut out, answer)?;
+        }
+        Ok(false)
+    }
+
+    fn reply(out: &mut TcpStream, v: serde_json::Value) -> Result<()> {
+        out.write_all(serde_json::to_string(&v).unwrap().as_bytes())?;
+        out.write_all(b"\n")?;
+        out.flush()?;
+        Ok(())
+    }
+}

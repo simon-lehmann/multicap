@@ -1,0 +1,22 @@
+multicap - record many Windows application windows at once
+
+  multicap check                     can this machine capture at all (exit 3 if not)
+  multicap windows                   capturable windows: handle, pid, title, size
+  multicap record --json '{...}' --seconds 12
+  multicap record --config take.json --seconds 12
+  multicap serve [--port 7788]       take orders as newline-delimited JSON
+
+A take config:
+
+  {
+    "name": "s04-t1",
+    "dir": "\\\\spark\\rec",
+    "capture_cursor": false,
+    "targets": [
+      {"label": "i1", "hwnd": 123456, "pid": 4242, "video": true,  "audio": true},
+      {"label": "i2", "hwnd": 123457, "pid": 4243, "video": false, "audio": true}
+    ],
+    "video": {"width": 1920, "height": 1080, "codec": "hevc", "fps": 60, "quality": 20}
+  }
+
+Everything prints JSON on stdout.
