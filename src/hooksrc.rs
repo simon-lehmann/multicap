@@ -20,7 +20,7 @@ use windows::Win32::System::Memory::OpenFileMappingW;
 use windows::Win32::System::Memory::{
     MapViewOfFile, UnmapViewOfFile, FILE_MAP_READ, MEMORY_MAPPED_VIEW_ADDRESS,
 };
-use windows::Win32::System::Performance::QueryPerformanceFrequency;
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{
     OpenEventW, WaitForSingleObject, SYNCHRONIZATION_ACCESS_RIGHTS,
 };
@@ -35,6 +35,11 @@ pub struct HookSource {
     frame_event: HANDLE,
     slot_bytes: u32,
     qpc_hz: i64,
+    /// One (counter, wall clock) pair taken when this opened, so a frame's
+    /// performance-counter stamp can be told as a time of day. The counter has
+    /// no epoch of its own; anything outside this process needs one.
+    ref_qpc_100ns: i64,
+    ref_unix: f64,
     pub namespace: Namespace,
     /// Last sequence handed out, so the same frame is not encoded twice.
     last_sequence: u64,
@@ -115,17 +120,33 @@ in another Windows session and could only create a Local mapping, which cannot b
         let mut hz = 0i64;
         unsafe { QueryPerformanceFrequency(&mut hz)? };
 
+        let mut qpc_now = 0i64;
+        unsafe { QueryPerformanceCounter(&mut qpc_now)? };
+        let ref_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let ref_qpc_100ns = (qpc_now as i128 * TICKS_PER_SEC as i128 / hz as i128) as i64;
+
         Ok(Self {
             mapping,
             view,
             frame_event,
             slot_bytes: header.slot_bytes,
             qpc_hz: hz,
+            ref_qpc_100ns,
+            ref_unix,
             namespace,
             last_sequence: 0,
             scratch: Vec::new(),
             stats: ReadStats::default(),
         })
+    }
+
+    /// A frame's timestamp as a wall-clock time, in seconds since the epoch.
+    /// The runner dates its own cues against this.
+    pub fn unix_of(&self, time_100ns: i64) -> f64 {
+        self.ref_unix + (time_100ns - self.ref_qpc_100ns) as f64 / TICKS_PER_SEC as f64
     }
 
     pub fn header(&self) -> &Header {

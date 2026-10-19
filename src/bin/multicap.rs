@@ -260,6 +260,10 @@ mod windows_main {
         /// Computed from two timestamps off the same performance counter: the
         /// hook stamps each frame, the audio engine stamps each buffer.
         audio_offset_seconds: Option<f64>,
+        /// Wall-clock time of the first frame, seconds since the epoch. The
+        /// shoot runner dates pointer and typed-text cues against this to turn
+        /// them into seconds within the file.
+        first_picture: Option<f64>,
         ffmpeg_hint: Option<String>,
     }
 
@@ -291,19 +295,41 @@ mod windows_main {
         audio: bool,
         stop: Arc<AtomicBool>,
     ) -> Result<Vec<HookReport>> {
+        let files: Vec<(u32, String)> = pids
+            .iter()
+            .map(|&pid| (pid, default_name(pid, out, dir)))
+            .collect();
+        record_hooks_to(&files, how_long, audio, stop)
+    }
+
+    /// Where a take's file goes when the caller did not say.
+    fn default_name(pid: u32, out: Option<&str>, dir: Option<&str>) -> String {
+        match (out, dir) {
+            (Some(o), _) => o.to_string(),
+            (None, Some(d)) => {
+                let d = d.trim_end_matches(['/', '\\']);
+                // Keep whatever separator the caller used, rather than
+                // producing D:\dir/file.mp4.
+                let sep = if d.contains('\\') { '\\' } else { '/' };
+                format!("{d}{sep}hook-{pid}.mp4")
+            }
+            (None, None) => format!("hook-{pid}.mp4"),
+        }
+    }
+
+    /// The real fan-out: each game with the exact file it should be written to.
+    /// Naming belongs to whoever asked for the take — a shoot runner has its own
+    /// convention and the tools downstream of it expect that convention, not
+    /// ours.
+    fn record_hooks_to(
+        files: &[(u32, String)],
+        how_long: Duration,
+        audio: bool,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Vec<HookReport>> {
         let mut threads = Vec::new();
-        for &pid in pids {
-            let file = match (out, dir) {
-                (Some(o), _) => o.to_string(),
-                (None, Some(d)) => {
-                    let d = d.trim_end_matches(['/', '\\']);
-                    // Keep whatever separator the caller used, rather than
-                    // producing D:\dir/file.mp4.
-                    let sep = if d.contains('\\') { '\\' } else { '/' };
-                    format!("{d}{sep}hook-{pid}.mp4")
-                }
-                (None, None) => format!("hook-{pid}.mp4"),
-            };
+        let pids: Vec<u32> = files.iter().map(|(p, _)| *p).collect();
+        for (pid, file) in files.iter().cloned() {
             let stop = stop.clone();
             threads.push(std::thread::spawn(move || {
                 unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
@@ -427,6 +453,7 @@ mod windows_main {
             height: h,
             constant_quality,
             cadence: (!times.is_empty()).then(|| multicap::timing::cadence(&times, 0)),
+            first_picture: times.first().map(|t| src.unix_of(*t)),
             reads,
             ffmpeg_hint: audio_offset_seconds.map(|o| {
                 format!(
@@ -641,6 +668,19 @@ mod windows_main {
                         .unwrap_or("D:\\wow-sandbox\\rec")
                         .to_string();
                     let audio = req.get("audio").and_then(|a| a.as_bool()).unwrap_or(true);
+                    // {"outputs": {"<pid>": "D:\\...\\take-i1.mp4"}} lets the
+                    // caller name each file; without it they are named by pid.
+                    let outputs: HashMap<u32, String> = req
+                        .get("outputs")
+                        .and_then(|o| o.as_object())
+                        .map(|o| {
+                            o.iter()
+                                .filter_map(|(k, v)| {
+                                    Some((k.parse().ok()?, v.as_str()?.to_string()))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     // An upper bound so a take nobody stops cannot fill the disk.
                     let cap = req
                         .get("max_seconds")
@@ -664,23 +704,26 @@ mod windows_main {
                             serde_json::json!({ "error": "already recording", "pids": busy })
                         } else {
                             let stop = Arc::new(AtomicBool::new(false));
-                            let (s2, p2, t) = (stop.clone(), pids.clone(), take.clone());
-                            let thread = std::thread::spawn(move || {
-                                record_hooks_until(
-                                    &p2,
-                                    None,
-                                    Some(&dir),
-                                    Duration::from_secs_f64(cap),
-                                    audio,
-                                    s2,
-                                )
-                                .map(|mut v| {
-                                    for r in &mut v {
-                                        r.take = Some(t.clone());
-                                    }
-                                    v
+                            let files: Vec<(u32, String)> = pids
+                                .iter()
+                                .map(|&p| {
+                                    let f = outputs
+                                        .get(&p)
+                                        .cloned()
+                                        .unwrap_or_else(|| default_name(p, None, Some(&dir)));
+                                    (p, f)
                                 })
-                                .map_err(|e| e.to_string())
+                                .collect();
+                            let (s2, t) = (stop.clone(), take.clone());
+                            let thread = std::thread::spawn(move || {
+                                record_hooks_to(&files, Duration::from_secs_f64(cap), audio, s2)
+                                    .map(|mut v| {
+                                        for r in &mut v {
+                                            r.take = Some(t.clone());
+                                        }
+                                        v
+                                    })
+                                    .map_err(|e| e.to_string())
                             });
                             map.insert(
                                 take.clone(),
