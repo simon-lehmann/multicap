@@ -1,0 +1,11 @@
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/release/deps/slice_pool2-5019126df4e8b7bb.d: /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/lib.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/owned.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/owned.rs
+
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/release/deps/libslice_pool2-5019126df4e8b7bb.rlib: /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/lib.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/owned.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/owned.rs
+
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/release/deps/libslice_pool2-5019126df4e8b7bb.rmeta: /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/lib.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/owned.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/owned.rs
+
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/lib.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/mod.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/sync/owned.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/mod.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/slice-pool2-0.4.3/src/unsync/owned.rs:

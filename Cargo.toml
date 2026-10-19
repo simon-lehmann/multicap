@@ -1,3 +1,9 @@
+[workspace]
+members = ["crates/ipc", "crates/hook", "crates/inject"]
+# The hook and the injector are built for i686 on purpose, so they are not part
+# of a plain `cargo build` at the root.
+default-members = [".", "crates/ipc"]
+
 [package]
 name = "multicap"
 version = "0.1.0"

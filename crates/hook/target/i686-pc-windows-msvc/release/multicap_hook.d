@@ -1,0 +1,1 @@
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/release/multicap_hook.dll: /home/simon/repo/multicap/crates/hook/src/dump.rs /home/simon/repo/multicap/crates/hook/src/lib.rs /home/simon/repo/multicap/crates/hook/src/shmem.rs /home/simon/repo/multicap/crates/hook/src/status.rs /home/simon/repo/multicap/crates/ipc/src/lib.rs

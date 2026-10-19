@@ -49,25 +49,41 @@ straight onto another machine, so there is no copy step after a shot.
 
 **It refuses to record nothing.** See below.
 
-## Headless: read this first
+## Headless: two ways, and why there are two
 
 Graphics capture takes its picture from the desktop compositor, and the compositor
 only composes when the machine has an **active display output**. With every monitor
-switched off or unplugged, there is no output: capture starts cleanly, reports no
+switched off or unplugged there is no output: capture starts cleanly, reports no
 error, and writes zero frames. A monitor switched off at its power button drops off
-the bus and counts as unplugged.
+the bus and counts as unplugged. No screen-capture API gets around this — not
+Graphics Capture, not Desktop Duplication, not GDI.
 
-No capture API fixes this — not Graphics Capture, not Desktop Duplication, not GDI.
-It is not a recorder problem. Give the machine an output:
+`multicap check` detects it and exits 3, and a window take refuses to start rather
+than write an empty file.
 
-- an **HDMI/DisplayPort dummy plug** in a spare port (hardware, no driver), or
-- a **virtual display driver** (software, an install).
+**If you can give the machine an output**, do: an HDMI/DisplayPort dummy plug, or a
+virtual display driver. Window capture then works normally, the frame never leaves
+the GPU, and you choose the resolution you record at.
 
-Either also ends the 1024x768 fallback desktop and lets you pick the resolution you
-record at.
+**If you cannot**, use the graphics hook (`crates/hook`). It is loaded into the game
+and patches the Direct3D call that hands a finished frame to the display, so the
+frame is taken from the game's own swap chain before the compositor exists in the
+story at all. No display output is needed, ever. This is how OBS's game capture
+works, and it is why that records with a monitor switched off.
 
-`multicap check` detects both conditions and exits 3, and every take refuses to
-start rather than produce an empty file.
+The hook costs something: plain Direct3D 9 has no shared textures, so the frame is
+read back into system memory rather than staying on the GPU. Use window capture
+when you can and the hook when you must.
+
+```
+multicap-inject list                 # processes that can be hooked
+multicap-inject <pid> multicap_hook.dll
+multicap-inject status <pid>         # what the hook inside that process reports
+```
+
+The hook also writes `%TEMP%\multicap-hook-<pid>.json` once a second, because
+there is no way to attach a debugger to a hook living inside somebody's game, and
+named objects in the `Local\` namespace cannot be read from another session.
 
 ## What a take produces
 
@@ -106,16 +122,16 @@ Audio stays lossless 32-bit float WAV until you decide otherwise.
 
 ## Status
 
-Written and compiling; **not yet run against real hardware**. Nothing below is
-claimed to work until it has been measured on a machine.
-
 | What | State |
 |---|---|
 | Builds for `x86_64-pc-windows-msvc` | yes, including cross-compiled from Linux |
 | Frame cadence logic | unit-tested on every platform in CI |
-| Capture, encode, audio, daemon | compile; unproven at runtime |
+| Shared memory layout identical 32-bit and 64-bit | asserted at compile time, both targets |
+| **Graphics hook on a Direct3D 9 game, monitor off** | **proven** 19 Oct 2026: injected into WoW 3.3.5a (32-bit, D3D9) on a machine with no display output. 289 frames, 289 `Present` calls, 0 dropped, correct colour and orientation |
+| Hook resolution | follows the game's back buffer. With no display the desktop falls back to 1024x768 and a windowed game renders at that size — fix the game's resolution, not the hook |
+| Window capture, encode, audio, daemon | compile; unproven at runtime |
+| Hook wired to the encoder | not done: frames reach shared memory, nothing writes an .mp4 from them yet |
 | Constant-quality rate control | best effort — support varies by vendor and driver; the report says which mode was actually used |
-| Headless with a dummy plug or virtual display | untested |
 | More than a handful of simultaneous windows | untested |
 | 4K | untested |
 

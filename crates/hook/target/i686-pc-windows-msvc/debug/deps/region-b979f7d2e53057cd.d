@@ -1,0 +1,14 @@
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/debug/deps/region-b979f7d2e53057cd.d: /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lib.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/alloc.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/error.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lock.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/windows.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/page.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/protect.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/query.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/util.rs
+
+/home/simon/repo/multicap/crates/hook/target/i686-pc-windows-msvc/debug/deps/libregion-b979f7d2e53057cd.rmeta: /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lib.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/alloc.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/error.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lock.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/mod.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/windows.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/page.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/protect.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/query.rs /home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/util.rs
+
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lib.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/alloc.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/error.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/lock.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/mod.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/os/windows.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/page.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/protect.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/query.rs:
+/home/simon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/region-3.0.2/src/util.rs:

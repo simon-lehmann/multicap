@@ -23,6 +23,26 @@ jobs:
           name: multicap-x86_64-pc-windows-msvc
           path: target/release/multicap.exe
 
+  hook:
+    name: build the 32-bit graphics hook (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+      # Statically linked: an injected DLL must not depend on a redistributable
+      # being present in whatever process it is loaded into.
+      - run: cargo build --release --target i686-pc-windows-msvc -p multicap-hook -p multicap-inject
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multicap-hook-i686
+          path: |
+            target/i686-pc-windows-msvc/release/multicap_hook.dll
+            target/i686-pc-windows-msvc/release/multicap-inject.exe
+
   # The platform-independent logic (frame cadence) is tested here too, so a
   # change to it is caught without waiting for a Windows runner.
   linux:

@@ -1,0 +1,26 @@
+[package]
+name = "multicap-inject"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Load the multicap graphics hook into a running game process."
+
+[[bin]]
+name = "multicap-inject"
+path = "src/main.rs"
+
+[dependencies]
+multicap-ipc = { path = "../ipc" }
+
+[dependencies.windows]
+version = "0.58"
+features = [
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_Security",
+]
